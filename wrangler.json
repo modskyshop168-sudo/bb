@@ -1,11 +1,11 @@
 {
-  "name": "powertech",
+  "name": "skymod",
   "main": "worker.js",
   "compatibility_date": "2025-11-08",
   "kv_namespaces": [
     {
       "binding": "UID_BINDINGS",
-      "id": "3082747ee9174db1b99c36d04ac3aedf"
+      "id": "ee71a6246b544e7094d2322b7c8e89c1"
     }
   ]
 }
