@@ -1,4 +1,4 @@
-  addEventListener("fetch", event => {
+addEventListener("fetch", event => {
   event.respondWith(handleRequest(event.request));
 });
 
@@ -12,36 +12,42 @@ async function handleRequest(request) {
   const EXPIRED_REDIRECT_URL = "https://life4u22.blogspot.com/p/powertech.html";
   const DEVICE_CONFLICT_URL = "https://life4u22.blogspot.com/p/id-ban.html";
   const NON_OTT_REDIRECT_URL = "https://life4u22.blogspot.com/p/ott-channel-review.html";
-  const SIGN_SECRET = "mySuperSecretKey"; // 改成你自己的签名密钥
-  const OTT_KEYWORDS = ["OTT Player", "OTT TV", "OTT Navigator"]; // 支持的 OTT APP
-  const MAX_APPS_PER_DEVICE = 3; // 同一设备最多允许绑定几个 APP
+  const SIGN_SECRET = "mySuperSecretKey"; 
+  const DEBUG_TOKEN = "AdminOnly123";  // ✅ 仅管理员知道的调试密钥
+  const OTT_KEYWORDS = ["OTT Player", "OTT TV", "OTT Navigator"];
   // =================
 
   const ua = request.headers.get("User-Agent") || "";
   const isAndroid = ua.includes("Android");
-  const appType = OTT_KEYWORDS.find(k => ua.includes(k)) || null;
+  const isTV = /TV|AFT|MiBOX|SmartTV|BRAVIA|SHIELD/i.test(ua);
+  const appType = OTT_KEYWORDS.find(k => ua.includes(k)) || (isTV ? "OTT-TV-Unknown" : null);
 
-  if (!isAndroid || !appType) {
-    return Response.redirect(NON_OTT_REDIRECT_URL, 302);
-  }
+  // ❌ 非 OTT 设备
+  if (!isAndroid || !appType) return Response.redirect(NON_OTT_REDIRECT_URL, 302);
 
+  // 参数验证
   const uid = params.get("uid");
   const exp = Number(params.get("exp"));
   const sig = params.get("sig");
-  if (!uid || !exp || !sig) return new Response("🚫 Invalid Link", { status: 403 });
+  if (!uid || !exp || !sig)
+    return new Response("🚫 Invalid Link", { status: 403 });
 
+  // 检查过期时间（马来西亚时区）
   const malaysiaNow = new Date(Date.now() + 8 * 60 * 60 * 1000);
-  const nowMillis = malaysiaNow.getTime();
+  if (malaysiaNow.getTime() > exp)
+    return Response.redirect(EXPIRED_REDIRECT_URL, 302);
 
-  if (nowMillis > exp) return Response.redirect(EXPIRED_REDIRECT_URL, 302);
-
+  // 签名验证
   const text = `${uid}:${exp}`;
   const expectedSig = await sign(text, SIGN_SECRET);
-  if (expectedSig !== sig) return new Response("🚫 Invalid Signature", { status: 403 });
+  const sigValid = expectedSig === sig;
+  if (!sigValid)
+    return new Response("🚫 Invalid Signature", { status: 403 });
 
-  const ip = request.headers.get("CF-Connecting-IP") || "0.0.0.0";
-  const deviceFingerprint = await getDeviceFingerprint(ua, ip, uid, SIGN_SECRET);
+  // 生成设备指纹（不含 IP）
+  const deviceFingerprint = await getDeviceFingerprint(ua, uid, SIGN_SECRET);
 
+  // 读取 KV 数据
   const key = `uid:${uid}`;
   let stored = null;
   try {
@@ -51,40 +57,43 @@ async function handleRequest(request) {
     return new Response("⚠️ KV 读取失败，请检查配置。", { status: 500 });
   }
 
-  // 🟩 情况 1：首次登入
+  // 首次登入
   if (!stored) {
     const toStore = { device: deviceFingerprint, apps: [appType] };
     await UID_BINDINGS.put(key, JSON.stringify(toStore));
-    console.log(`✅ UID ${uid} 首次绑定设备 ${deviceFingerprint}, app=${appType}`);
-    const target = `${GITHUB_PAGES_URL}${path}${url.search}`;
-    return fetch(target, request);
+    console.log(`✅ UID ${uid} 首次绑定 ${deviceFingerprint}, app=${appType}`);
+  } 
+  // 同设备
+  else if (stored.device === deviceFingerprint) {
+    console.log(`🟩 UID ${uid} 同设备访问 ${appType}`);
+  } 
+  // 不同设备 → 封锁
+  else {
+    console.log(`🚫 UID ${uid} 不同设备登入`);
+    return Response.redirect(DEVICE_CONFLICT_URL, 302);
   }
 
-  // 🟨 情况 2：同设备
-  if (stored.device === deviceFingerprint) {
-    const apps = Array.isArray(stored.apps) ? stored.apps : [];
-    // 如果当前 app 已绑定，直接通过
-    if (apps.includes(appType)) {
-      const target = `${GITHUB_PAGES_URL}${path}${url.search}`;
-      return fetch(target, request);
-    }
-
-    // 如果还没绑定该 app，检查配额
-    if (apps.length < MAX_APPS_PER_DEVICE) {
-      apps.push(appType);
-      stored.apps = [...new Set(apps)]; // 去重
-      await UID_BINDINGS.put(key, JSON.stringify(stored));
-      console.log(`🟩 UID ${uid} 同设备新增绑定 app=${appType}`);
-      const target = `${GITHUB_PAGES_URL}${path}${url.search}`;
-      return fetch(target, request);
-    } else {
-      return new Response("⚠️ 已达到同设备可登入的最大 APP 数量。", { status: 403 });
-    }
+  // 🧩 管理员 Debug 模式（需 token）
+  const debugEnabled = url.searchParams.get("debug") === "1";
+  const token = url.searchParams.get("token");
+  if (debugEnabled && token === DEBUG_TOKEN) {
+    const debugData = {
+      uid,
+      ua,
+      exp,
+      malaysiaTime: malaysiaNow.toISOString(),
+      sigValid,
+      deviceFingerprint,
+      stored,
+    };
+    return new Response(JSON.stringify(debugData, null, 2), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
-  // 🟥 情况 3：不同设备尝试登入 -> 拒绝
-  console.log(`🚫 UID ${uid} 试图从不同设备登入`);
-  return Response.redirect(DEVICE_CONFLICT_URL, 302);
+  // ✅ 正常访问
+  return fetch(`${GITHUB_PAGES_URL}${path}${url.search}`, request);
 }
 
 /** 🔐 生成签名 */
@@ -102,9 +111,9 @@ async function sign(text, secret) {
     .join("");
 }
 
-/** 📱 设备指纹（根据 UID + IP + 简化 UA） */
-async function getDeviceFingerprint(ua, ip, uid, secret) {
+/** 📱 设备指纹（不含 IP）*/
+async function getDeviceFingerprint(ua, uid, secret) {
   const cleanUA = ua.replace(/\s+/g, " ").trim().slice(0, 120);
-  const base = `${uid}:${ip}:${cleanUA}`;
+  const base = `${uid}:${cleanUA}`;
   return await sign(base, secret);
-}
+                        }
