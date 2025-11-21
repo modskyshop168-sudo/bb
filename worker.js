@@ -8,7 +8,8 @@ async function handleRequest(request) {
   const params = url.searchParams;
 
   // === ⚙️ 配置区 ===
-  const GITHUB_PAGES_URL = "https://modskyshop168-sudo.github.io/cc/";
+  // 更改为 R2 资源链接 (M3U 文件)
+  const R2_RESOURCE_URL = "https://pub-3b1b42ae8adb483cb2455c8ee77143d5.r2.dev/pl.m3u";
   const EXPIRED_REDIRECT_URL = "https://life4u22.blogspot.com/p/powertech.html";
   const DEVICE_CONFLICT_URL = "https://life4u22.blogspot.com/p/id-ban.html";
   const NON_OTT_REDIRECT_URL = "https://life4u22.blogspot.com/p/channel-listott.html";
@@ -53,6 +54,7 @@ async function handleRequest(request) {
   let stored = null;
   
   try {
+    // 假设 UID_BINDINGS 是已绑定的 Cloudflare KV 命名空间
     stored = await UID_BINDINGS.get(key, "json");
   } catch (e) {
     console.error(`KV Read/Parse Error for ${key}:`, e);
@@ -84,7 +86,8 @@ async function handleRequest(request) {
   }
 
   // ✅ 正常访问
-  return fetch(`${GITHUB_PAGES_URL}${path}${url.search}`, request);
+  // 成功通过所有验证后，代理并返回 R2 资源的内容
+  return fetch(R2_RESOURCE_URL, request);
 }
 
 // 辅助函数：将十六进制字符串转换为 ArrayBuffer
